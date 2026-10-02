@@ -1,0 +1,73 @@
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  CATALOGER
+  APPROVER
+  ADMIN
+}
+
+enum ProductStatus {
+  DRAFT
+  IN_REVIEW
+  APPROVED
+  REJECTED
+}
+
+model User {
+  id       String @id @default(uuid())
+  name     String
+  email    String @unique
+  role     Role   @default(CATALOGER)
+}
+
+
+model Product {
+  id                     String        @id @default(uuid())
+  name                   String
+  category               String        // Ring, Necklace, Bracelet, Earrings
+  type                   String        // Solitaire, Halo, Bezel, Lariat, etc.
+  baseMetalWeightGrams   Float
+  manufacturingLabor     Float
+  
+  // Category-specific variations (stored as JSON arrays)
+  allowedChainLengths    String        @default("[]")
+  allowedDiamondShapes   String        @default("[]")
+  allowedDiamondOrigins  String        @default("[]") // ["Natural Diamond", "Lab-Created Diamond"]
+  allowedCaratWeights    String        @default("[]") // ["0.1", "0.2", ..., "4.0"]
+  allowedClarities       String        @default("[]") // ["FL", "IF", "VVS1", ...]
+  allowedColours         String        @default("[]") // ["D", "E", "F", ...]
+  allowedCutGrades       String        @default("[]") // ["Excellent", "Very Good", ...]
+  allowedCertificates    String        @default("[]") // ["GIA", "IGI/HRD", ...]
+
+  status                 ProductStatus @default(DRAFT)
+  rejectionReason        String?
+  createdAt              DateTime      @default(now())
+  updatedAt              DateTime      @updatedAt
+}
+
+model Metal {
+  id           String @id @default(uuid())
+  name         String // 18k Yellow Gold, Platinum, Rose Gold
+  pricePerGram Float  // Live market rate per gram
+}
+
+model Diamond {
+  id       String @id @default(uuid())
+  shape    String // Round, Princess, Oval, Emerald
+  carat    Float  // 0.5, 1.0, 1.5, 2.0
+  baseCost Float  // Wholesale diamond cost
+}
+
+model PricingRules {
+  id                     Int   @id @default(1)
+  retailMarkupPercentage Float @default(40.0) // 40% margin
+  logisticsFee           Float @default(50.0) // Flat shipping/insurance
+  packagingFee           Float @default(15.0) // Presentation box fee
+}
