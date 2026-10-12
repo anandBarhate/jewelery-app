@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect } from 'react';
-import { Plus, Edit2, Trash2, X, RefreshCw } from 'lucide-react';
+import { Plus, Edit2, Trash2, X, RefreshCw, Image as ImageIcon } from 'lucide-react';
 
 const DIAMOND_SHAPES = ['Round', 'Oval', 'Cushion', 'Pear', 'Princess', 'Marquise', 'Asscher', 'Emerald', 'Radiant', 'Heart'];
 const DIAMOND_ORIGINS = ['Natural Diamond', 'Lab-Created Diamond'];
@@ -19,6 +19,7 @@ export default function CatalogPage() {
     name: '',
     category: 'Ring',
     type: 'Solitaire',
+    imageUrl: '',
     baseMetalWeightGrams: 4.5,
     manufacturingLabor: 150.0,
     allowedChainLengths: ['16"', '18"'],
@@ -67,18 +68,14 @@ export default function CatalogPage() {
   function handleEditClick(product) {
     setEditingId(product.id);
     const parseJSON = (val) => {
-      try {
-        const parsed = JSON.parse(val || '[]');
-        return Array.isArray(parsed) ? parsed : [];
-      } catch (e) {
-        return [];
-      }
+      try { return JSON.parse(val || '[]'); } catch (e) { return []; }
     };
 
     setForm({
       name: product.name || '',
       category: product.category || 'Ring',
       type: product.type || 'Solitaire',
+      imageUrl: product.imageUrl || '',
       baseMetalWeightGrams: product.baseMetalWeightGrams || 0,
       manufacturingLabor: product.manufacturingLabor || 0,
       allowedChainLengths: parseJSON(product.allowedChainLengths),
@@ -190,7 +187,27 @@ export default function CatalogPage() {
               className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-sm text-white"
             />
           </div>
+
+          <div className="col-span-2">
+            <label className="text-xs text-slate-400 block mb-1 flex items-center gap-1">
+              <ImageIcon className="w-3.5 h-3.5 text-amber-400" /> Image Asset URL
+            </label>
+            <input
+              value={form.imageUrl}
+              onChange={e => setForm({ ...form, imageUrl: e.target.value })}
+              placeholder="https://images.unsplash.com/photo-1605100804763-247f67b3557e"
+              className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-sm text-white"
+            />
+          </div>
         </div>
+
+        {/* Image Preview */}
+        {form.imageUrl && (
+          <div className="bg-slate-950 p-3 border border-slate-800 rounded flex items-center gap-4">
+            <img src={form.imageUrl} alt="Preview" className="w-16 h-16 object-cover rounded border border-slate-700" />
+            <span className="text-xs text-slate-400">Live Image Asset Preview</span>
+          </div>
+        )}
 
         {/* Necklace Chain Lengths */}
         {form.category === 'Necklace' && (
@@ -252,7 +269,7 @@ export default function CatalogPage() {
             </div>
           </div>
 
-          {/* Carat Weights (0.1 to 4.0 in steps of 0.1) */}
+          {/* Carat Weights */}
           <div>
             <div className="flex justify-between items-center mb-2">
               <label className="text-xs text-slate-400 font-semibold">Carat Weight Choices (0.1ct – 4.0ct)</label>
@@ -363,6 +380,7 @@ export default function CatalogPage() {
         <table className="w-full text-left text-sm text-slate-300">
           <thead className="bg-slate-800/50 text-slate-400 text-xs uppercase">
             <tr>
+              <th className="p-4">Media</th>
               <th className="p-4">Name</th>
               <th className="p-4">Category</th>
               <th className="p-4">Configured Attributes</th>
@@ -375,10 +393,17 @@ export default function CatalogPage() {
               const parseCount = (str) => { try { return JSON.parse(str || '[]').length; } catch(e) { return 0; } };
               return (
                 <tr key={p.id}>
+                  <td className="p-4">
+                    {p.imageUrl ? (
+                      <img src={p.imageUrl} alt={p.name} className="w-10 h-10 object-cover rounded border border-slate-800" />
+                    ) : (
+                      <div className="w-10 h-10 bg-slate-800 rounded flex items-center justify-center text-slate-500 text-xs font-mono">No Img</div>
+                    )}
+                  </td>
                   <td className="p-4 font-medium text-white">{p.name}</td>
                   <td className="p-4">{p.category}</td>
                   <td className="p-4 text-xs text-slate-400">
-                    {parseCount(p.allowedDiamondOrigins)} Origins | {parseCount(p.allowedDiamondShapes)} Shapes | {parseCount(p.allowedCaratWeights)} Carats | {parseCount(p.allowedCertificates)} Certs
+                    {parseCount(p.allowedDiamondOrigins)} Origins | {parseCount(p.allowedDiamondShapes)} Shapes | {parseCount(p.allowedCaratWeights)} Carats
                   </td>
                   <td className="p-4">
                     <span className={`px-2 py-1 rounded-full text-xs font-semibold ${

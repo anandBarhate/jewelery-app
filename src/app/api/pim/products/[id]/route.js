@@ -13,6 +13,7 @@ export async function PUT(request, props) {
         name: body.name,
         category: body.category,
         type: body.type,
+        imageUrl: body.imageUrl || '',
         baseMetalWeightGrams: parseFloat(body.baseMetalWeightGrams),
         manufacturingLabor: parseFloat(body.manufacturingLabor),
         allowedChainLengths: JSON.stringify(body.allowedChainLengths || []),

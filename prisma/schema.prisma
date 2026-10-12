@@ -27,25 +27,22 @@ model User {
   role     Role   @default(CATALOGER)
 }
 
-
 model Product {
   id                     String        @id @default(uuid())
   name                   String
-  category               String        // Ring, Necklace, Bracelet, Earrings
-  type                   String        // Solitaire, Halo, Bezel, Lariat, etc.
+  category               String
+  type                   String
   baseMetalWeightGrams   Float
   manufacturingLabor     Float
-  
-  // Category-specific variations (stored as JSON arrays)
+  imageUrl               String?       @default("")
   allowedChainLengths    String        @default("[]")
   allowedDiamondShapes   String        @default("[]")
-  allowedDiamondOrigins  String        @default("[]") // ["Natural Diamond", "Lab-Created Diamond"]
-  allowedCaratWeights    String        @default("[]") // ["0.1", "0.2", ..., "4.0"]
-  allowedClarities       String        @default("[]") // ["FL", "IF", "VVS1", ...]
-  allowedColours         String        @default("[]") // ["D", "E", "F", ...]
-  allowedCutGrades       String        @default("[]") // ["Excellent", "Very Good", ...]
-  allowedCertificates    String        @default("[]") // ["GIA", "IGI/HRD", ...]
-
+  allowedDiamondOrigins  String        @default("[]")
+  allowedCaratWeights    String        @default("[]")
+  allowedClarities       String        @default("[]")
+  allowedColours         String        @default("[]")
+  allowedCutGrades       String        @default("[]")
+  allowedCertificates    String        @default("[]")
   status                 ProductStatus @default(DRAFT)
   rejectionReason        String?
   createdAt              DateTime      @default(now())
@@ -54,20 +51,20 @@ model Product {
 
 model Metal {
   id           String @id @default(uuid())
-  name         String // 18k Yellow Gold, Platinum, Rose Gold
-  pricePerGram Float  // Live market rate per gram
+  name         String @unique
+  pricePerGram Float
 }
 
 model Diamond {
   id       String @id @default(uuid())
-  shape    String // Round, Princess, Oval, Emerald
-  carat    Float  // 0.5, 1.0, 1.5, 2.0
-  baseCost Float  // Wholesale diamond cost
+  shape    String
+  carat    Float
+  baseCost Float
 }
 
 model PricingRules {
   id                     Int   @id @default(1)
-  retailMarkupPercentage Float @default(40.0) // 40% margin
-  logisticsFee           Float @default(50.0) // Flat shipping/insurance
-  packagingFee           Float @default(15.0) // Presentation box fee
+  retailMarkupPercentage Float @default(40.0)
+  logisticsFee           Float @default(50.0)
+  packagingFee           Float @default(15.0)
 }

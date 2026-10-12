@@ -20,6 +20,7 @@ export async function POST(request) {
         name: body.name,
         category: body.category,
         type: body.type,
+        imageUrl: body.imageUrl || '',
         baseMetalWeightGrams: parseFloat(body.baseMetalWeightGrams),
         manufacturingLabor: parseFloat(body.manufacturingLabor),
         allowedChainLengths: JSON.stringify(body.allowedChainLengths || []),
@@ -30,8 +31,8 @@ export async function POST(request) {
         allowedColours: JSON.stringify(body.allowedColours || []),
         allowedCutGrades: JSON.stringify(body.allowedCutGrades || []),
         allowedCertificates: JSON.stringify(body.allowedCertificates || []),
-        status: 'DRAFT'
-      }
+        status: 'DRAFT',
+      },
     });
     return NextResponse.json(product);
   } catch (error) {
