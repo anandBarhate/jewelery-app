@@ -1,9 +1,11 @@
 "use client";
 import React, { useState, useEffect, use } from "react";
+import { useCart } from "@/context/CartContext";
 
 export default function ConfiguratorPDP({ params: paramsPromise }) {
   const params = use(paramsPromise);
   const id = params.id;
+  const { addToCart } = useCart();
 
   const [product, setProduct] = useState(null);
   const [metals, setMetals] = useState([]);
@@ -26,8 +28,8 @@ export default function ConfiguratorPDP({ params: paramsPromise }) {
       try {
         const res = await fetch(`/api/shop/product/${id}`);
         const data = await res.json();
-
         const prod = data.product;
+
         setProduct(prod);
         setMetals(data.metals || []);
         setRules(data.pricingRules || null);
@@ -79,7 +81,7 @@ export default function ConfiguratorPDP({ params: paramsPromise }) {
   const allowedCerts = parseArray(product.allowedCertificates);
   const allowedLengths = parseArray(product.allowedChainLengths);
 
-  // Dynamic pricing calculation
+  // Dynamic pricing engine calculation
   const metalCost = product.baseMetalWeightGrams * (selectedMetal?.pricePerGram || 0);
   const caratVal = selectedCarat ? parseFloat(selectedCarat) : 1.0;
   const diamondCost = caratVal * 2200 * (selectedOrigin === 'Lab-Created Diamond' ? 0.35 : 1.0);
@@ -88,9 +90,27 @@ export default function ConfiguratorPDP({ params: paramsPromise }) {
   const baseTotalCost = metalCost + diamondCost + laborAndFees;
   const finalPrice = baseTotalCost * (1 + (rules?.retailMarkupPercentage || 0) / 100);
 
+  const handleAddToCart = () => {
+    const payload = {
+      productId: product.id,
+      productName: product.name,
+      metal: selectedMetal?.name,
+      origin: selectedOrigin,
+      shape: selectedShape,
+      carat: selectedCarat,
+      clarity: selectedClarity,
+      colour: selectedColour,
+      cut: selectedCut,
+      cert: selectedCert,
+      chainLength: selectedLength,
+      configuredPrice: finalPrice,
+    };
+    addToCart(payload);
+  };
+
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-12 py-6">
-      {/* Product Media & Information */}
+      {/* Summary Side */}
       <div className="bg-neutral-100 rounded-lg p-10 flex flex-col justify-between">
         <div>
           <span className="text-xs uppercase tracking-widest text-amber-800 font-bold">{product.category}</span>
@@ -121,7 +141,7 @@ export default function ConfiguratorPDP({ params: paramsPromise }) {
         </div>
       </div>
 
-      {/* Dynamic Controls Side */}
+      {/* Configurator Controls Side */}
       <div className="space-y-6">
         {/* Metal Selection */}
         {metals.length > 0 && (
@@ -286,7 +306,10 @@ export default function ConfiguratorPDP({ params: paramsPromise }) {
           )}
         </div>
 
-        <button className="w-full bg-neutral-900 text-white py-4 rounded font-medium tracking-wide uppercase text-xs hover:bg-neutral-800 transition-colors">
+        <button
+          onClick={handleAddToCart}
+          className="w-full bg-neutral-900 text-white py-4 rounded font-medium tracking-wide uppercase text-xs hover:bg-neutral-800 transition-colors shadow-sm"
+        >
           Add Configuration to Cart
         </button>
       </div>
