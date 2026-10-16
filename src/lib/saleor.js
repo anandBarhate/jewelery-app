@@ -31,25 +31,21 @@ export async function saleorFetch({ query, variables = {} }) {
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  try {
-    const res = await fetch(SALEOR_API_URL, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ query, variables }),
-    });
+  const res = await fetch(SALEOR_API_URL, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ query, variables }),
+  });
 
-    const json = await res.json();
-    if (json.errors) {
-      console.warn('Saleor GraphQL Warnings:', json.errors);
-    }
-    return json.data || null;
-  } catch (error) {
-    console.warn('Saleor backend not reachable at http://localhost:8000/graphql/. Running locally.');
-    return null;
+  const json = await res.json();
+  if (json.errors && json.errors.length > 0) {
+    console.error('Saleor GraphQL Server Errors:', json.errors);
+    throw new Error(json.errors[0]?.message || 'GraphQL Execution Error');
   }
+  return json.data || null;
 }
 
-// 1. Customer Authentication Queries & Mutations
+// 1. Customer Authentication Queries
 export const REGISTER_CUSTOMER_MUTATION = `
   mutation RegisterCustomer($email: String!, $password: String!, $redirectUrl: String!) {
     accountRegister(
@@ -60,14 +56,8 @@ export const REGISTER_CUSTOMER_MUTATION = `
         channel: "default-channel"
       }
     ) {
-      user {
-        id
-        email
-      }
-      errors {
-        field
-        message
-      }
+      user { id email }
+      errors { field message }
     }
   }
 `;
@@ -76,16 +66,8 @@ export const LOGIN_CUSTOMER_MUTATION = `
   mutation LoginCustomer($email: String!, $password: String!) {
     tokenCreate(email: $email, password: $password) {
       token
-      user {
-        id
-        email
-        firstName
-        lastName
-      }
-      errors {
-        field
-        message
-      }
+      user { id email firstName lastName }
+      errors { field message }
     }
   }
 `;
@@ -122,55 +104,25 @@ export const GET_CUSTOMER_ORDERS = `
   }
 `;
 
-// 2. Headless Checkout & Cart Operations
-export const GET_SAMPLE_VARIANT = `
-  query GetSampleVariant {
-    products(first: 1, channel: "default-channel") {
-      edges {
-        node {
-          variants {
-            id
-            name
-            pricing {
-              price {
-                gross {
-                  amount
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-`;
-
+// 2. Persistent Basket & Checkout Mutations
 export const CREATE_CHECKOUT = `
-  mutation CreateCheckout($lines: [CheckoutLineInput!]!, $metadata: [MetadataInput!]) {
-    checkoutCreate(
-      input: {
-        channel: "default-channel"
-        lines: $lines
-        metadata: $metadata
-      }
-    ) {
+  mutation CreateCheckout($input: CheckoutCreateInput!) {
+    checkoutCreate(input: $input) {
       checkout {
         id
-        totalPrice {
-          gross {
+        isShippingRequired
+        shippingMethods {
+          id
+          name
+          price {
             amount
             currency
           }
         }
-        lines {
-          id
-          quantity
-          variant {
-            id
-            name
-            product {
-              name
-            }
+        totalPrice {
+          gross {
+            amount
+            currency
           }
         }
       }
@@ -182,7 +134,35 @@ export const CREATE_CHECKOUT = `
   }
 `;
 
-// 3. Checkout Progression & Payment Flow
+export const ADD_TO_CHECKOUT = `
+  mutation AddToCheckout($id: ID!, $lines: [CheckoutLineInput!]!) {
+    checkoutLinesAdd(id: $id, lines: $lines) {
+      checkout {
+        id
+        isShippingRequired
+        totalPrice {
+          gross {
+            amount
+            currency
+          }
+        }
+        shippingMethods {
+          id
+          name
+          price {
+            amount
+            currency
+          }
+        }
+      }
+      errors {
+        field
+        message
+      }
+    }
+  }
+`;
+
 export const UPDATE_CHECKOUT_EMAIL = `
   mutation UpdateCheckoutEmail($id: ID!, $email: String!) {
     checkoutEmailUpdate(id: $id, email: $email) {
@@ -192,41 +172,19 @@ export const UPDATE_CHECKOUT_EMAIL = `
   }
 `;
 
-// export const UPDATE_CHECKOUT_ADDRESS = `
-//   mutation UpdateCheckoutAddress($id: ID!, $address: AddressInput!) {
-//     checkoutShippingAddressUpdate(id: $id, shippingAddress: $address) {
-//       checkout {
-//         id
-//         shippingMethods {
-//           id
-//           name
-//           price {
-//             amount
-//             currency
-//           }
-//         }
-//         availableShippingMethods {
-//           id
-//           name
-//         }
-//       }
-//       errors { field message }
-//     }
-//     checkoutBillingAddressUpdate(id: $id, billingAddress: $address) {
-//       checkout { id }
-//       errors { field message }
-//     }
-//   }
-// `;
-
 export const UPDATE_SHIPPING_ADDRESS = `
   mutation UpdateShippingAddress($id: ID!, $address: AddressInput!) {
     checkoutShippingAddressUpdate(id: $id, shippingAddress: $address) {
       checkout {
         id
+        isShippingRequired
         shippingMethods {
           id
           name
+          price {
+            amount
+            currency
+          }
         }
       }
       errors { field message }
@@ -238,22 +196,6 @@ export const UPDATE_BILLING_ADDRESS = `
   mutation UpdateBillingAddress($id: ID!, $address: AddressInput!) {
     checkoutBillingAddressUpdate(id: $id, billingAddress: $address) {
       checkout { id }
-      errors { field message }
-    }
-  }
-`;
-
-export const CREATE_PAYMENT = `
-  mutation CreatePayment($id: ID!, $amount: PositiveDecimal!) {
-    checkoutPaymentCreate(
-      id: $id
-      input: {
-        gateway: "mirumee.payments.dummy"
-        token: "fully_charged"
-        amount: $amount
-      }
-    ) {
-      payment { id }
       errors { field message }
     }
   }
@@ -275,6 +217,21 @@ export const UPDATE_DELIVERY_METHOD = `
   }
 `;
 
+export const CREATE_PAYMENT = `
+  mutation CreatePayment($id: ID!, $amount: PositiveDecimal!) {
+    checkoutPaymentCreate(
+      id: $id
+      input: {
+        gateway: "mirumee.payments.dummy"
+        token: "fully_charged"
+        amount: $amount
+      }
+    ) {
+      payment { id }
+      errors { field message }
+    }
+  }
+`;
 
 export const COMPLETE_CHECKOUT = `
   mutation CompleteCheckout($id: ID!) {

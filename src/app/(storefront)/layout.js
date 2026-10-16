@@ -194,12 +194,28 @@ function HeaderNav() {
 }
 
 function CartDrawer() {
-  const { isCartOpen, setIsCartOpen, items, removeFromCart } = useCart();
+  const { isCartOpen, setIsCartOpen, items, updateCartItem, removeFromCart } = useCart();
 
   if (!isCartOpen) return null;
 
   const calculateTotal = () => {
     return items.reduce((sum, item) => sum + (item.configuredPrice || 0), 0);
+  };
+
+  const handleQuickMetalChange = (cartLineId, currentItem, newMetal) => {
+    // Recalculate price delta based on metal upgrade/downgrade
+    const metalPriceDeltas = {
+      "14k White Gold": 0,
+      "18k Yellow Gold": 350,
+      "Platinum": 750,
+    };
+    const baseWithoutMetal = (currentItem.configuredPrice || 2500) - (metalPriceDeltas[currentItem.metal] || 0);
+    const newPrice = baseWithoutMetal + (metalPriceDeltas[newMetal] || 0);
+
+    updateCartItem(cartLineId, {
+      metal: newMetal,
+      configuredPrice: newPrice,
+    });
   };
 
   return (
@@ -215,29 +231,44 @@ function CartDrawer() {
 
           <div className="divide-y divide-neutral-100 max-h-[65vh] overflow-y-auto mt-4 space-y-4">
             {items.length === 0 ? (
-              <div className="py-12 text-center text-sm text-neutral-500">Your shopping basket is currently empty.</div>
+              <div className="py-12 text-center text-sm text-neutral-500">Your shopping basket is empty.</div>
             ) : (
               items.map((item) => (
-                <div key={item.cartLineId} className="pt-4 flex justify-between items-start">
-                  <div>
-                    <h3 className="font-serif font-semibold text-sm text-neutral-900">{item.productName}</h3>
-                    <p className="text-xs text-neutral-500 mt-1">
-                      {item.metal} {item.carat ? `| ${item.carat}ct` : ''} {item.shape ? `${item.shape}` : ''}
-                    </p>
-                    {item.clarity && (
-                      <p className="text-[11px] text-neutral-400">
-                        {item.clarity} | {item.colour} | {item.cert}
+                <div key={item.cartLineId} className="pt-4 space-y-2">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <h3 className="font-serif font-semibold text-sm text-neutral-900">{item.productName}</h3>
+                      {item.sku && <span className="text-[10px] bg-neutral-100 text-neutral-600 px-1.5 py-0.5 rounded font-mono">{item.sku}</span>}
+                      <p className="text-xs text-neutral-500 mt-1">
+                        {item.carat ? `${item.carat}ct ` : ''}{item.shape} {item.clarity ? `• ${item.clarity}` : ''}
                       </p>
-                    )}
-                    <p className="text-xs font-bold text-neutral-900 mt-2">${item.configuredPrice?.toFixed(2)}</p>
+                    </div>
+
+                    <button
+                      onClick={() => removeFromCart(item.cartLineId)}
+                      className="text-neutral-400 hover:text-rose-600 p-1"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
                   </div>
 
-                  <button
-                    onClick={() => removeFromCart(item.cartLineId)}
-                    className="text-neutral-400 hover:text-rose-600 p-1"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                  {/* IN-PLACE CONFIGURATION SELECTOR */}
+                  <div className="flex items-center justify-between bg-neutral-50 p-2 rounded border border-neutral-200">
+                    <span className="text-[11px] uppercase font-semibold text-neutral-500">Metal:</span>
+                    <select
+                      value={item.metal || "18k Yellow Gold"}
+                      onChange={(e) => handleQuickMetalChange(item.cartLineId, item, e.target.value)}
+                      className="text-xs bg-white border border-neutral-300 rounded px-2 py-1 text-neutral-800"
+                    >
+                      <option value="14k White Gold">14k White Gold</option>
+                      <option value="18k Yellow Gold">18k Yellow Gold (+$350)</option>
+                      <option value="Platinum">Platinum (+$750)</option>
+                    </select>
+                  </div>
+
+                  <div className="text-right">
+                    <p className="text-sm font-bold text-neutral-900">${item.configuredPrice?.toFixed(2)}</p>
+                  </div>
                 </div>
               ))
             )}

@@ -5,16 +5,15 @@ import { useCart } from '@/context/CartContext';
 import { ShieldCheck, CheckCircle2, Loader2, ArrowRight } from 'lucide-react';
 import {
   saleorFetch,
-  UPDATE_CHECKOUT_EMAIL,
+  CREATE_CHECKOUT,
   UPDATE_SHIPPING_ADDRESS,
-  UPDATE_BILLING_ADDRESS,
   UPDATE_DELIVERY_METHOD,
   CREATE_PAYMENT,
-  COMPLETE_CHECKOUT
+  COMPLETE_CHECKOUT,
 } from '@/lib/saleor';
 
 export default function CheckoutPage() {
-  const { items, checkoutId, clearCart } = useCart();
+  const { items, clearCart } = useCart();
 
   const [shipping, setShipping] = useState({
     firstName: 'Eleanor',
@@ -24,7 +23,7 @@ export default function CheckoutPage() {
     city: 'New York',
     state: 'NY',
     postalCode: '10001',
-    country: 'US'
+    country: 'US',
   });
 
   const [isProcessing, setIsProcessing] = useState(false);
@@ -40,17 +39,28 @@ export default function CheckoutPage() {
     setIsProcessing(true);
     setErrorMsg('');
 
-    // Fallback for standalone / offline mode
-    if (!checkoutId) {
-      setTimeout(() => {
-        clearCart();
-        setCompletedOrder({ number: `LOCAL-${Date.now().toString().slice(-6)}` });
-        setIsProcessing(false);
-      }, 1500);
+    if (items.length === 0) {
+      setErrorMsg('Your cart is empty.');
+      setIsProcessing(false);
       return;
     }
 
     try {
+      // 1. Provision fresh, live variants for every cart line
+      const lines = [];
+      for (const item of items) {
+        const res = await fetch('/api/cart/variant', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ configuration: item }),
+        });
+        const data = await res.json();
+        if (!data.success || !data.variantId) {
+          throw new Error(`Variant provisioning failed: ${data.error || 'Server error'}`);
+        }
+        lines.push({ variantId: data.variantId, quantity: 1 });
+      }
+
       const addressInput = {
         firstName: shipping.firstName,
         lastName: shipping.lastName,
@@ -58,75 +68,98 @@ export default function CheckoutPage() {
         city: shipping.city,
         postalCode: shipping.postalCode,
         countryArea: shipping.state,
-        country: shipping.country
+        country: shipping.country,
       };
 
-      // 1. Assign Email
-      const emailRes = await saleorFetch({
-        query: UPDATE_CHECKOUT_EMAIL,
-        variables: { id: checkoutId, email: shipping.email }
+      // 2. Create Checkout Session atomically
+      const checkoutRes = await saleorFetch({
+        query: CREATE_CHECKOUT,
+        variables: {
+          input: {
+            channel: 'default-channel',
+            email: shipping.email,
+            lines,
+            shippingAddress: addressInput,
+            billingAddress: addressInput,
+          },
+        },
       });
-      if (emailRes?.checkoutEmailUpdate?.errors?.length > 0) {
-        throw new Error(`Email: ${emailRes.checkoutEmailUpdate.errors[0].message}`);
+
+      const checkoutErrors = checkoutRes?.checkoutCreate?.errors || [];
+      if (checkoutErrors.length > 0) {
+        throw new Error(`Checkout Error (${checkoutErrors[0].field}):${checkoutErrors[0].message}`);
       }
 
-      // 2. Assign Shipping Address
-      const shipRes = await saleorFetch({
-        query: UPDATE_SHIPPING_ADDRESS,
-        variables: { id: checkoutId, address: addressInput }
-      });
-      if (shipRes?.checkoutShippingAddressUpdate?.errors?.length > 0) {
-        throw new Error(`Shipping Address: ${shipRes.checkoutShippingAddressUpdate.errors[0].message}`);
+      const checkout = checkoutRes?.checkoutCreate?.checkout;
+      if (!checkout?.id) throw new Error('Saleor did not return a valid Checkout ID.');
+
+      let finalAmount = checkout.totalPrice.gross.amount;
+
+      // 3. Handle Delivery Selection only if the items require physical delivery
+      if (checkout.isShippingRequired) {
+        let shippingMethods = checkout.shippingMethods || [];
+
+        // If not populated initially, trigger address update to recalculate available rates
+        if (shippingMethods.length === 0) {
+          const shipRes = await saleorFetch({
+            query: UPDATE_SHIPPING_ADDRESS,
+            variables: { id: checkout.id, address: addressInput },
+          });
+          shippingMethods = shipRes?.checkoutShippingAddressUpdate?.checkout?.shippingMethods || [];
+        }
+
+        if (shippingMethods.length > 0) {
+          const deliveryRes = await saleorFetch({
+            query: UPDATE_DELIVERY_METHOD,
+            variables: {
+              id: checkout.id,
+              deliveryMethodId: shippingMethods[0].id,
+            },
+          });
+
+          const deliveryErrors = deliveryRes?.checkoutDeliveryMethodUpdate?.errors || [];
+          if (deliveryErrors.length > 0) {
+            throw new Error(`Delivery Method: ${deliveryErrors[0].message}`);
+          }
+
+          finalAmount =
+            deliveryRes?.checkoutDeliveryMethodUpdate?.checkout?.totalPrice?.gross?.amount || finalAmount;
+        }
       }
 
-      // 3. Assign Billing Address
-      const billRes = await saleorFetch({
-        query: UPDATE_BILLING_ADDRESS,
-        variables: { id: checkoutId, address: addressInput }
-      });
-      if (billRes?.checkoutBillingAddressUpdate?.errors?.length > 0) {
-        throw new Error(`Billing Address: ${billRes.checkoutBillingAddressUpdate.errors[0].message}`);
-      }
-
-      // 4. Select Delivery Method
-      const methods = shipRes?.checkoutShippingAddressUpdate?.checkout?.shippingMethods || [];
-      if (methods.length === 0) {
-        throw new Error('No shipping methods available for this address.');
-      }
-
-      const methodRes = await saleorFetch({
-        query: UPDATE_DELIVERY_METHOD,
-        variables: { id: checkoutId, deliveryMethodId: methods[0].id }
-      });
-      if (methodRes?.checkoutDeliveryMethodUpdate?.errors?.length > 0) {
-        throw new Error(`Delivery Method: ${methodRes.checkoutDeliveryMethodUpdate.errors[0].message}`);
-      }
-
-      // 5. Process Mock Payment
-      const exactSaleorTotal = methodRes?.checkoutDeliveryMethodUpdate?.checkout?.totalPrice?.gross?.amount;
+      // 4. Authorize Payment
       const paymentRes = await saleorFetch({
         query: CREATE_PAYMENT,
-        variables: { id: checkoutId, amount: exactSaleorTotal }
+        variables: {
+          id: checkout.id,
+          amount: finalAmount,
+        },
       });
-      if (paymentRes?.checkoutPaymentCreate?.errors?.length > 0) {
-        throw new Error(`Payment: ${paymentRes.checkoutPaymentCreate.errors[0].message}`);
+
+      const paymentErrors = paymentRes?.checkoutPaymentCreate?.errors || [];
+      if (paymentErrors.length > 0) {
+        throw new Error(`Payment: ${paymentErrors[0].message}`);
       }
 
-      // 6. Finalize Order
+      // 5. Finalize Order
       const completeRes = await saleorFetch({
         query: COMPLETE_CHECKOUT,
-        variables: { id: checkoutId }
+        variables: { id: checkout.id },
       });
 
-      if (completeRes?.checkoutComplete?.errors?.length > 0) {
-        throw new Error(`Completion: ${completeRes.checkoutComplete.errors[0].message}`);
+      const completeErrors = completeRes?.checkoutComplete?.errors || [];
+      if (completeErrors.length > 0) {
+        throw new Error(`Completion: ${completeErrors[0].message}`);
       }
 
       const orderNumber = completeRes?.checkoutComplete?.order?.number;
+      if (!orderNumber) throw new Error('Saleor did not return an order confirmation number.');
+
       clearCart();
       setCompletedOrder({ number: orderNumber });
-    } catch (error) {
-      setErrorMsg(error.message);
+    } catch (err) {
+      console.error('Checkout failed:', err);
+      setErrorMsg(err.message);
     } finally {
       setIsProcessing(false);
     }
@@ -139,7 +172,7 @@ export default function CheckoutPage() {
         <div>
           <h1 className="text-3xl font-serif text-neutral-900">Order Confirmed!</h1>
           <p className="text-sm text-neutral-500 mt-2">
-            Your custom jewelry order <strong>#{completedOrder.number}</strong> has been successfully placed in Saleor.
+            Your custom jewelry order <strong>#{completedOrder.number}</strong> has been created in Saleor.
           </p>
         </div>
         <div className="pt-6">
@@ -161,7 +194,7 @@ export default function CheckoutPage() {
 
         {errorMsg && (
           <div className="mb-6 p-4 bg-rose-50 border border-rose-200 text-rose-700 text-sm rounded">
-            <strong>Checkout Error:</strong> {errorMsg}
+            <strong>Saleor Notice:</strong> {errorMsg}
           </div>
         )}
 
@@ -224,7 +257,7 @@ export default function CheckoutPage() {
                 />
               </div>
               <div>
-                <label className="text-xs font-bold uppercase text-neutral-600 block mb-1">State (e.g. NY)</label>
+                <label className="text-xs font-bold uppercase text-neutral-600 block mb-1">State</label>
                 <input
                   required
                   maxLength={2}
@@ -249,7 +282,7 @@ export default function CheckoutPage() {
             <h2 className="text-sm font-bold uppercase tracking-wider text-neutral-900 border-b pb-2">Payment</h2>
             <div className="bg-neutral-100 border border-neutral-200 p-4 rounded text-sm text-neutral-600 flex items-center gap-3">
               <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0" />
-              <span>Testing sandbox: uses Saleor dummy gateway to authorize mock checkout transaction.</span>
+              <span>Testing sandbox: authorizes payment via Saleor's dummy gateway.</span>
             </div>
           </div>
 
@@ -260,7 +293,7 @@ export default function CheckoutPage() {
           >
             {isProcessing ? (
               <>
-                <Loader2 className="w-4 h-4 animate-spin" /> Finalizing Checkout in Saleor...
+                <Loader2 className="w-4 h-4 animate-spin" /> Submitting to Saleor...
               </>
             ) : (
               <>
