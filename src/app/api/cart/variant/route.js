@@ -4,7 +4,6 @@ const SALEOR_URL = process.env.NEXT_PUBLIC_SALEOR_API_URL || 'http://localhost:8
 
 let cachedProductId = null;
 
-// Authenticated fetch that captures and bubbles full GraphQL schema errors
 async function saleorAdminFetch(query, variables = {}) {
   const tokenRes = await fetch(SALEOR_URL, {
     method: 'POST',
@@ -40,15 +39,29 @@ async function saleorAdminFetch(query, variables = {}) {
   return json.data;
 }
 
-function buildSkuAndName(config, timestamp = Date.now().toString().slice(-6)) {
+// Builds clean SKU and pure specification variant name (no duplicated product titles)
+function buildSkuAndVariantName(config, timestamp = Date.now().toString().slice(-6)) {
   const metalCode = (config.metal || 'GLD').replace(/[^a-zA-Z0-9]/g, '').slice(0, 4).toUpperCase();
   const shapeCode = (config.shape || 'RD').slice(0, 2).toUpperCase();
-  const sku = `JWL-${metalCode}-${config.carat || '1.0'}CT-${shapeCode}-${timestamp}`;
-  const name = `${config.productName || 'Diamond Ring'} (${config.metal || '18k'}, ${config.carat || '1.0'}ct ${config.shape || 'Round'})`;
-  return { sku, name };
+  const caratCode = (config.carat || '1.0').toString().replace('.', '');
+  const lengthCode = config.chainLength ? `-${config.chainLength.replace(/[^0-9]/g, '')}IN` : '';
+  const sku = `JWL-${metalCode}-${caratCode}CT-${shapeCode}${lengthCode}-${timestamp}`;
+
+  const specTokens = [
+    config.metal,
+    config.carat ? `${config.carat}ct ${config.shape || ''}`.trim() : config.shape,
+    config.chainLength ? `${config.chainLength} Chain` : null, // e.g. "18\" Chain"
+    config.clarity,
+    config.colour,
+    config.ringSize ? `Size ${config.ringSize}` : null,
+  ].filter(Boolean);
+
+  const variantName = specTokens.length > 0 ? specTokens.join(' • ') : 'Standard Specification';
+
+  return { sku, variantName };
 }
 
-// Ensure clean ProductType with zero mandatory variant attributes
+// Ensure clean ProductType exists
 async function getOrCreateCleanProductType() {
   const data = await saleorAdminFetch(`
     query {
@@ -74,7 +87,7 @@ async function getOrCreateCleanProductType() {
   );
   if (match) return match.node.id;
 
-    const createData = await saleorAdminFetch(
+  const createData = await saleorAdminFetch(
     `
       mutation CreateCleanType($input: ProductTypeInput!) {
         productTypeCreate(input: $input) {
@@ -87,19 +100,17 @@ async function getOrCreateCleanProductType() {
       input: {
         name: "Bespoke Jewelry Engine",
         hasVariants: true,
-        isShippingRequired: true, // Guarantees Saleor calculates physical delivery methods
+        isShippingRequired: true,
         productAttributes: [],
         variantAttributes: [],
       },
     }
   );
 
-  const errors = createData?.productTypeCreate?.errors || [];
-  if (errors.length > 0) throw new Error(`ProductType error: ${errors[0].message}`);
   return createData.productTypeCreate.productType.id;
 }
 
-// Ensure Master Product exists and is actively published in default-channel
+// Master product: Clean title with engine details stored in description
 async function getOrCreateMasterProduct(channelId) {
   if (cachedProductId) return cachedProductId;
 
@@ -111,9 +122,10 @@ async function getOrCreateMasterProduct(channelId) {
         edges {
           node {
             id
+            name
             slug
             channelListings {
-              channel { id slug }
+              channel { id }
               isPublished
             }
           }
@@ -129,6 +141,19 @@ async function getOrCreateMasterProduct(channelId) {
   let existing = listData?.products?.edges?.find((e) => e.node.slug === "bespoke-jewelry-master")?.node;
   let productId = existing?.id;
 
+  // Rich description for the admin dashboard
+  const descriptionPayload = JSON.stringify({
+    time: Date.now(),
+    blocks: [
+      {
+        type: "paragraph",
+        data: {
+          text: "Bespoke Fine Jewelry Master — Handcrafted to custom specifications.",
+        },
+      },
+    ],
+  });
+
   if (!productId) {
     const createData = await saleorAdminFetch(
       `
@@ -141,30 +166,43 @@ async function getOrCreateMasterProduct(channelId) {
       `,
       {
         input: {
-          name: "Bespoke Fine Jewelry Master",
+          name: "Custom Diamond Ring", // Clean product name displayed on orders
           slug: "bespoke-jewelry-master",
+          description: descriptionPayload,
           productType: productTypeId,
           category: categoryId,
         },
       }
     );
-
-    const cErrors = createData?.productCreate?.errors || [];
-    if (cErrors.length > 0) throw new Error(`Master product error: ${cErrors[0].message}`);
     productId = createData.productCreate.product.id;
+  } else if (existing?.name !== "Custom Diamond Ring") {
+    // Update existing master product title if it still has the old name
+    await saleorAdminFetch(
+      `
+        mutation UpdateMasterDetails($id: ID!, $input: ProductInput!) {
+          productUpdate(id: $id, input: $input) {
+            product { id name }
+          }
+        }
+      `,
+      {
+        id: productId,
+        input: {
+          name: "Custom Diamond Ring",
+          description: descriptionPayload,
+        },
+      }
+    );
   }
 
-  const isAlreadyPublished = existing?.channelListings?.some(
-    (cl) => cl.channel.id === channelId && cl.isPublished
-  );
-
-  if (!isAlreadyPublished) {
-    const pubData = await saleorAdminFetch(
+  // Ensure channel publication
+  const isPublished = existing?.channelListings?.some((cl) => cl.channel.id === channelId && cl.isPublished);
+  if (!isPublished) {
+    await saleorAdminFetch(
       `
         mutation PublishProduct($id: ID!, $input: ProductChannelListingUpdateInput!) {
           productChannelListingUpdate(id: $id, input: $input) {
             product { id }
-            errors { field message code }
           }
         }
       `,
@@ -182,38 +220,30 @@ async function getOrCreateMasterProduct(channelId) {
         },
       }
     );
-
-    const pErrors = pubData?.productChannelListingUpdate?.errors || [];
-    if (pErrors.length > 0) throw new Error(`Channel publication error: ${pErrors[0].message}`);
   }
 
   cachedProductId = productId;
   return productId;
 }
 
-// POST: Create variant, assign channel price, set metadata, verify channel availability
+// 1. CREATE VARIANT (POST)
 export async function POST(req) {
   try {
     const { configuration } = await req.json();
 
-    // 1. Get channel
     const channelData = await saleorAdminFetch(`
       query {
-        channels {
-          id
-          slug
-          currencyCode
-        }
+        channels { id slug }
+        warehouses(first: 1) { edges { node { id } } }
       }
     `);
     const channel = channelData?.channels?.find((c) => c.slug === 'default-channel') || channelData?.channels?.[0];
-    if (!channel) throw new Error("No sales channel found in Saleor.");
+    const warehouseId = channelData?.warehouses?.edges?.[0]?.node?.id;
 
-    // 2. Ensure parent product is published in default-channel
     const productId = await getOrCreateMasterProduct(channel.id);
-    const { sku, name } = buildSkuAndName(configuration);
+    const { sku, variantName } = buildSkuAndVariantName(configuration);
 
-    // 3. Create Variant
+    // Create Variant (using clean variantName)
     const variantData = await saleorAdminFetch(
       `
         mutation CreateVariant($input: ProductVariantCreateInput!) {
@@ -227,26 +257,23 @@ export async function POST(req) {
         input: {
           product: productId,
           sku,
-          name,
+          name: variantName, // e.g. "18k Yellow Gold • 0.5ct Emerald • VVS1"
           trackInventory: false,
           attributes: [],
         },
       }
     );
 
-    const vErrors = variantData?.productVariantCreate?.errors || [];
-    if (vErrors.length > 0) throw new Error(`Variant creation error (${vErrors[0].field}): ${vErrors[0].message}`);
     const variant = variantData?.productVariantCreate?.productVariant;
-    if (!variant?.id) throw new Error("Variant ID missing from creation response.");
+    if (!variant?.id) throw new Error("Variant creation failed.");
 
-    // 4. Assign dynamic channel price (note: returns `variant { id }`, not `productVariant`)
+    // Assign dynamic price
     const priceAmount = Math.max(1, parseFloat(configuration.configuredPrice || 100));
-    const priceData = await saleorAdminFetch(
+    await saleorAdminFetch(
       `
         mutation SetVariantPrice($id: ID!, $input: [ProductVariantChannelListingAddInput!]!) {
           productVariantChannelListingUpdate(id: $id, input: $input) {
             variant { id }
-            errors { field message }
           }
         }
       `,
@@ -256,10 +283,24 @@ export async function POST(req) {
       }
     );
 
-    const pErrors = priceData?.productVariantChannelListingUpdate?.errors || [];
-    if (pErrors.length > 0) throw new Error(`Variant pricing error: ${pErrors[0].message}`);
+    // Ensure warehouse stock availability
+    if (warehouseId) {
+      await saleorAdminFetch(
+        `
+          mutation AddStock($variantId: ID!, $stocks: [StockInput!]!) {
+            productVariantStocksCreate(variantId: $variantId, stocks: $stocks) {
+              productVariant { id }
+            }
+          }
+        `,
+        {
+          variantId: variant.id,
+          stocks: [{ warehouse: warehouseId, quantity: 100 }],
+        }
+      );
+    }
 
-    // 5. Attach 4Cs & metal specifications
+    // Attach complete metadata breakdown for the bench jeweler
     await saleorAdminFetch(
       `
         mutation SetVariantMetadata($id: ID!, $input: [MetadataInput!]!) {
@@ -277,18 +318,21 @@ export async function POST(req) {
           { key: 'clarity', value: String(configuration.clarity || '') },
           { key: 'colour', value: String(configuration.colour || '') },
           { key: 'cert', value: String(configuration.cert || '') },
+          { key: 'ringSize', value: String(configuration.ringSize || '6.5') },
+          { key: 'engraving', value: String(configuration.engraving || '') },
           { key: 'configuredPrice', value: String(priceAmount) },
+          { key: 'chainLength', value: String(configuration.chainLength || '') },
         ],
       }
     );
 
-    console.log(`[Saleor] Live verified variant ready: ${variant.sku} ($${priceAmount})`);
+    console.log(`[Saleor] Line item formatted: Custom Diamond Ring / ${variantName}`);
 
     return NextResponse.json({
       success: true,
       variantId: variant.id,
       sku: variant.sku,
-      name: variant.name,
+      name: variantName,
     });
   } catch (error) {
     console.error("Variant API Failure:", error.message);
@@ -296,24 +340,23 @@ export async function POST(req) {
   }
 }
 
-// PATCH: Mutate variant in-place
+// 2. MUTATE VARIANT IN-PLACE (PATCH)
 export async function PATCH(req) {
   try {
     const { variantId, configuration } = await req.json();
     if (!variantId) throw new Error('Missing variantId');
 
-    const { sku, name } = buildSkuAndName(configuration);
+    const { sku, variantName } = buildSkuAndVariantName(configuration);
 
     await saleorAdminFetch(
       `
         mutation UpdateVariant($id: ID!, $input: ProductVariantInput!) {
           productVariantUpdate(id: $id, input: $input) {
             productVariant { id sku name }
-            errors { field message }
           }
         }
       `,
-      { id: variantId, input: { sku, name, trackInventory: false } }
+      { id: variantId, input: { sku, name: variantName, trackInventory: false } }
     );
 
     const channelData = await saleorAdminFetch(`query { channels { id slug } }`);
@@ -325,7 +368,6 @@ export async function PATCH(req) {
         mutation UpdatePrice($id: ID!, $input: [ProductVariantChannelListingAddInput!]!) {
           productVariantChannelListingUpdate(id: $id, input: $input) {
             variant { id }
-            errors { field message }
           }
         }
       `,
@@ -335,7 +377,7 @@ export async function PATCH(req) {
       }
     );
 
-    return NextResponse.json({ success: true, variantId, sku, name });
+    return NextResponse.json({ success: true, variantId, sku, name: variantName });
   } catch (error) {
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }

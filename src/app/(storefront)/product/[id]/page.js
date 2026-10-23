@@ -1,317 +1,420 @@
 "use client";
-import React, { useState, useEffect, use } from "react";
-import { useCart } from "@/context/CartContext";
+import React, { useState, useEffect } from 'react';
+import { useParams } from 'next/navigation';
+import { useCart } from '@/context/CartContext';
+import { Check, ShieldCheck, Sparkles, Loader2, AlertCircle } from 'lucide-react';
 
-export default function ConfiguratorPDP({ params: paramsPromise }) {
-  const params = use(paramsPromise);
-  const id = params.id;
+const METALS = [
+  { id: '18k-yellow', label: '18k Yellow Gold', sub: '$45/g', priceDelta: 0 },
+  { id: '18k-white', label: '18k White Gold', sub: '$65/g', priceDelta: 120 },
+  { id: 'platinum', label: 'Platinum', sub: '$42/g', priceDelta: 250 },
+];
+
+const CHAIN_LENGTHS = [
+  { label: '16"', sub: 'Included', priceDelta: 0 },
+  { label: '18"', sub: '+$60', priceDelta: 60 },
+  { label: '20"', sub: '+$120', priceDelta: 120 },
+  { label: '22"', sub: '+$180', priceDelta: 180 },
+  { label: '24"', sub: '+$240', priceDelta: 240 },
+];
+
+const RING_SIZES = ['5.0', '5.5', '6.0', '6.5', '7.0', '7.5', '8.0', '8.5', '9.0'];
+
+const ORIGINS = ['Natural Diamond', 'Lab-Created Diamond'];
+const SHAPES = ['Round', 'Princess', 'Emerald', 'Oval', 'Heart'];
+const CARATS = ['0.5ct', '0.6ct', '1.0ct', '1.3ct', '1.5ct', '2.0ct', '2.6ct', '2.8ct'];
+const CLARITIES = ['VVS1', 'VVS2', 'VS1', 'VS2', 'FL', 'IF'];
+const COLOURS = ['D', 'E', 'F', 'G'];
+
+export default function ProductConfiguratorPage() {
+  const params = useParams();
+  const productId = params?.id;
   const { addToCart } = useCart();
 
+  // Dynamic Product State
   const [product, setProduct] = useState(null);
-  const [metals, setMetals] = useState([]);
-  const [rules, setRules] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState('');
 
-  // Storefront Selection States
-  const [selectedMetal, setSelectedMetal] = useState(null);
-  const [selectedOrigin, setSelectedOrigin] = useState(null);
-  const [selectedShape, setSelectedShape] = useState(null);
-  const [selectedCarat, setSelectedCarat] = useState(null);
-  const [selectedClarity, setSelectedClarity] = useState(null);
-  const [selectedColour, setSelectedColour] = useState(null);
-  const [selectedCut, setSelectedCut] = useState(null);
-  const [selectedCert, setSelectedCert] = useState(null);
-  const [selectedLength, setSelectedLength] = useState(null);
+  // Configurator Options State
+  const [metal, setMetal] = useState('18k Yellow Gold');
+  const [chainLength, setChainLength] = useState('18"');
+  const [ringSize, setRingSize] = useState('6.5');
+  const [origin, setOrigin] = useState('Natural Diamond');
+  const [shape, setShape] = useState('Round');
+  const [carat, setCarat] = useState('1.0ct');
+  const [clarity, setClarity] = useState('VVS1');
+  const [colour, setColour] = useState('D');
+  const [cut] = useState('Excellent');
+  const [cert] = useState('GIA');
+  const [isAdding, setIsAdding] = useState(false);
 
+  // 1. Fetch live product details from the API
   useEffect(() => {
-    async function loadData() {
+    if (!productId) return;
+
+    async function fetchProduct() {
       try {
-        const res = await fetch(`/api/shop/product/${id}`);
+        setLoading(true);
+        const res = await fetch(`/api/shop/product/${productId}`);
+        if (!res.ok) throw new Error(`Product not found (${res.status})`);
         const data = await res.json();
-        const prod = data.product;
+        const productData = data?.product || data;
+        setProduct(productData);
 
-        setProduct(prod);
-        setMetals(data.metals || []);
-        setRules(data.pricingRules || null);
-
-        if (data.metals?.length) setSelectedMetal(data.metals[0]);
-
-        const parseFirst = (jsonStr) => {
-          try {
-            const arr = JSON.parse(jsonStr || '[]');
-            return Array.isArray(arr) && arr.length > 0 ? arr[0] : null;
-          } catch (e) { return null; }
-        };
-
-        if (prod) {
-          setSelectedOrigin(parseFirst(prod.allowedDiamondOrigins));
-          setSelectedShape(parseFirst(prod.allowedDiamondShapes));
-          setSelectedCarat(parseFirst(prod.allowedCaratWeights));
-          setSelectedClarity(parseFirst(prod.allowedClarities));
-          setSelectedColour(parseFirst(prod.allowedColours));
-          setSelectedCut(parseFirst(prod.allowedCutGrades));
-          setSelectedCert(parseFirst(prod.allowedCertificates));
-          setSelectedLength(parseFirst(prod.allowedChainLengths));
+        // Pre-select shape if specified by base product
+        if (productData?.defaultShape && SHAPES.includes(productData.defaultShape)) {
+          setShape(productData.defaultShape);
         }
-      } catch (error) {
-        console.error("Error loading product:", error);
+      } catch (err) {
+        console.error("Configurator fetch error:", err);
+        setFetchError(err.message);
       } finally {
         setLoading(false);
       }
     }
-    loadData();
-  }, [id]);
 
-  if (loading) return <div className="py-20 text-center font-serif text-neutral-500">Loading Fine Jewelry Configurator...</div>;
-  if (!product) return <div className="py-20 text-center font-serif text-neutral-900">Product Not Found</div>;
+    fetchProduct();
+  }, [productId]);
 
-  const parseArray = (jsonStr) => {
-    try {
-      const parsed = JSON.parse(jsonStr || '[]');
-      return Array.isArray(parsed) ? parsed : [];
-    } catch (e) { return []; }
+  // Identify jewelry category
+  const productName = product?.name || 'Fine Jewelry';
+  const categoryStr = (product?.category?.name || product?.name || '').toLowerCase();
+  const isNecklace = categoryStr.includes('necklace') || categoryStr.includes('pendant');
+  const isRing = categoryStr.includes('ring') || (!isNecklace && !categoryStr.includes('earring'));
+
+  // 2. Dynamic Price Engine
+  const basePrice = product?.basePrice || product?.price || 1850;
+  const metalDelta = METALS.find((m) => m.label === metal)?.priceDelta || 0;
+  const chainDelta = isNecklace ? (CHAIN_LENGTHS.find((c) => c.label === chainLength)?.priceDelta || 0) : 0;
+  const caratMultiplier = parseFloat(carat) || 1.0;
+  const originDiscount = origin.includes('Lab') ? 0.65 : 1.0;
+
+  const configuredPrice = (
+    (basePrice + metalDelta + chainDelta) *
+    (caratMultiplier * 0.9 + 0.5) *
+    originDiscount
+  ).toFixed(2);
+
+  // 3. Add to Cart Handler
+  const handleAddToCart = async () => {
+    setIsAdding(true);
+    await addToCart({
+      productId,
+      productName,
+      metal,
+      chainLength: isNecklace ? chainLength : undefined,
+      ringSize: isRing ? ringSize : undefined,
+      origin,
+      shape,
+      carat: carat.replace('ct', ''),
+      clarity,
+      colour,
+      cut,
+      cert,
+      configuredPrice: parseFloat(configuredPrice),
+    });
+    setIsAdding(false);
   };
 
-  const allowedOrigins = parseArray(product.allowedDiamondOrigins);
-  const allowedShapes = parseArray(product.allowedDiamondShapes);
-  const allowedCarats = parseArray(product.allowedCaratWeights);
-  const allowedClarities = parseArray(product.allowedClarities);
-  const allowedColours = parseArray(product.allowedColours);
-  const allowedCuts = parseArray(product.allowedCutGrades);
-  const allowedCerts = parseArray(product.allowedCertificates);
-  const allowedLengths = parseArray(product.allowedChainLengths);
+  if (loading) {
+    return (
+      <div className="min-h-[60vh] flex flex-col items-center justify-center gap-3">
+        <Loader2 className="w-8 h-8 animate-spin text-neutral-400" />
+        <span className="text-xs uppercase tracking-wider text-neutral-500 font-medium">
+          Loading Customizer...
+        </span>
+      </div>
+    );
+  }
 
-  // Dynamic pricing engine calculation
-  const metalCost = product.baseMetalWeightGrams * (selectedMetal?.pricePerGram || 0);
-  const caratVal = selectedCarat ? parseFloat(selectedCarat) : 1.0;
-  const diamondCost = caratVal * 2200 * (selectedOrigin === 'Lab-Created Diamond' ? 0.35 : 1.0);
-  const laborAndFees = product.manufacturingLabor + (rules?.logisticsFee || 0) + (rules?.packagingFee || 0);
-
-  const baseTotalCost = metalCost + diamondCost + laborAndFees;
-  const finalPrice = baseTotalCost * (1 + (rules?.retailMarkupPercentage || 0) / 100);
-
-  const handleAddToCart = () => {
-    const payload = {
-      productId: product.id,
-      productName: product.name,
-      metal: selectedMetal?.name,
-      origin: selectedOrigin,
-      shape: selectedShape,
-      carat: selectedCarat,
-      clarity: selectedClarity,
-      colour: selectedColour,
-      cut: selectedCut,
-      cert: selectedCert,
-      chainLength: selectedLength,
-      configuredPrice: finalPrice,
-    };
-    addToCart(payload);
-  };
+  if (fetchError || !product) {
+    return (
+      <div className="max-w-md mx-auto my-24 p-8 border border-neutral-200 rounded-xl text-center space-y-4">
+        <AlertCircle className="w-10 h-10 text-rose-500 mx-auto" />
+        <h2 className="text-lg font-serif font-bold text-neutral-900">Piece Not Available</h2>
+        <p className="text-xs text-neutral-500">
+          Unable to load product configuration. Please select a valid item from the catalog.
+        </p>
+      </div>
+    );
+  }
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-12 py-6">
-      {/* Summary Side */}
-      <div className="bg-neutral-100 rounded-lg p-10 flex flex-col justify-between">
-        <div>
-          <span className="text-xs uppercase tracking-widest text-amber-800 font-bold">{product.category}</span>
-          <h1 className="text-3xl font-serif mt-2 text-neutral-900">{product.name}</h1>
-          <p className="text-sm text-neutral-500 mt-2">
-            {selectedCarat && `${selectedCarat}ct `}
-            {selectedShape && `${selectedShape} `}
-            {selectedOrigin && `(${selectedOrigin}) `}
-            {selectedClarity && `| ${selectedClarity} `}
-            {selectedColour && `| ${selectedColour} `}
-            {selectedCert && `| ${selectedCert}`}
-          </p>
+    <div className="max-w-7xl mx-auto px-6 py-12">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-start">
 
-          <div className="mt-8 flex justify-center">
-            {product.imageUrl ? (
-              <img src={product.imageUrl} alt={product.name} className="max-h-72 object-contain rounded shadow-sm" />
-            ) : (
-              <div className="w-full h-64 bg-neutral-200/60 rounded flex items-center justify-center text-neutral-400 font-serif text-sm">
-                Fine Jewelry Preview
+        {/* ================= LEFT COLUMN: STICKY PREVIEW CARD ================= */}
+        <div className="lg:col-span-5 sticky top-24 space-y-6">
+          <div className="bg-neutral-50 border border-neutral-200/80 rounded-xl p-8 space-y-6 shadow-sm">
+            <div>
+              <span className="text-[11px] font-bold tracking-widest uppercase text-amber-900 block mb-1">
+                {isNecklace ? 'Bespoke Necklace' : isRing ? 'Bespoke Ring' : 'Fine Jewelry'}
+              </span>
+              <h1 className="text-3xl font-serif text-neutral-900">{productName}</h1>
+              <p className="text-xs text-neutral-500 mt-2 leading-relaxed">
+                {carat} {shape} ({origin}) • {clarity} | {colour} | {cert}
+                {isNecklace && ` • ${chainLength} Chain`}
+                {isRing && ` • Size ${ringSize}`}
+              </p>
+            </div>
+
+            {/* Visual Canvas Placeholder */}
+            <div className="aspect-[4/3] bg-neutral-100 rounded-lg border border-dashed border-neutral-300 flex flex-col items-center justify-center text-neutral-400 gap-2">
+              <Sparkles className="w-8 h-8 text-neutral-300" />
+              <span className="text-xs tracking-wide">Fine Jewelry Preview</span>
+            </div>
+
+            {/* Price Badge */}
+            <div className="border-t border-neutral-200 pt-5 flex justify-between items-end">
+              <div>
+                <span className="text-[10px] uppercase font-bold tracking-wider text-neutral-400 block">
+                  Configured Price
+                </span>
+                <span className="text-3xl font-serif font-bold text-neutral-900">
+                  ${parseFloat(configuredPrice).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                </span>
               </div>
-            )}
+              <div className="flex items-center gap-1.5 text-emerald-700 text-xs font-medium bg-emerald-50 px-2.5 py-1 rounded">
+                <ShieldCheck className="w-4 h-4" />
+                <span>Certified Genuine</span>
+              </div>
+            </div>
           </div>
         </div>
 
-        <div className="mt-12">
-          <span className="text-xs text-neutral-500 uppercase tracking-wider block mb-1">Configured Price</span>
-          <p className="text-4xl font-light font-serif text-neutral-900">${finalPrice.toFixed(2)}</p>
-        </div>
-      </div>
+        {/* ================= RIGHT COLUMN: CONFIGURATION STEPS ================= */}
+        <div className="lg:col-span-7 space-y-8">
 
-      {/* Configurator Controls Side */}
-      <div className="space-y-6">
-        {/* Metal Selection */}
-        {metals.length > 0 && (
-          <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-neutral-700 mb-2">1. Select Metal</label>
-            <div className="grid grid-cols-2 gap-2">
-              {metals.map((m) => (
+          {/* 1. SELECT METAL */}
+          <div className="space-y-3">
+            <h2 className="text-xs font-bold uppercase tracking-wider text-neutral-900">
+              1. Select Metal
+            </h2>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {METALS.map((m) => (
                 <button
                   key={m.id}
-                  onClick={() => setSelectedMetal(m)}
-                  className={`p-2.5 text-left rounded text-xs transition-all ${
-                    selectedMetal?.id === m.id ? 'border-amber-700 bg-amber-50/50 border ring-1 ring-amber-700' : 'border border-neutral-200'
+                  type="button"
+                  onClick={() => setMetal(m.label)}
+                  className={`p-3.5 text-left rounded-lg border transition-all ${
+                    metal === m.label
+                      ? 'border-amber-700 bg-amber-50/30 ring-1 ring-amber-700'
+                      : 'border-neutral-200 hover:border-neutral-400 bg-white'
                   }`}
                 >
-                  <div className="font-semibold text-neutral-900">{m.name}</div>
-                  <div className="text-neutral-500">${m.pricePerGram}/g</div>
+                  <div className="text-xs font-bold text-neutral-900">{m.label}</div>
+                  <div className="text-[11px] text-neutral-500 mt-0.5">{m.sub}</div>
                 </button>
               ))}
             </div>
           </div>
-        )}
 
-        {/* Diamond Origin */}
-        {allowedOrigins.length > 0 && (
-          <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-neutral-700 mb-2">2. Diamond Origin</label>
-            <div className="flex gap-2">
-              {allowedOrigins.map((origin) => (
-                <button
-                  key={origin}
-                  onClick={() => setSelectedOrigin(origin)}
-                  className={`flex-1 py-2 px-3 text-xs font-medium border rounded transition-all ${
-                    selectedOrigin === origin ? 'border-amber-700 bg-amber-50/50 text-amber-900 ring-1 ring-amber-700' : 'border-neutral-200 text-neutral-700'
-                  }`}
-                >
-                  {origin}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Diamond Shape */}
-        {allowedShapes.length > 0 && (
-          <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-neutral-700 mb-2">3. Diamond Shape</label>
-            <div className="grid grid-cols-5 gap-1.5">
-              {allowedShapes.map((shape) => (
-                <button
-                  key={shape}
-                  onClick={() => setSelectedShape(shape)}
-                  className={`py-2 text-xs font-medium border rounded text-center transition-all ${
-                    selectedShape === shape ? 'border-amber-700 bg-amber-50/50 text-amber-900 ring-1 ring-amber-700' : 'border-neutral-200 text-neutral-700'
-                  }`}
-                >
-                  {shape}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Carat Weights */}
-        {allowedCarats.length > 0 && (
-          <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-neutral-700 mb-2">4. Carat Weight</label>
-            <div className="grid grid-cols-6 gap-1.5 max-h-32 overflow-y-auto pr-1">
-              {allowedCarats.map((carat) => (
-                <button
-                  key={carat}
-                  onClick={() => setSelectedCarat(carat)}
-                  className={`py-2 text-xs font-medium border rounded text-center transition-all ${
-                    selectedCarat === carat ? 'border-amber-700 bg-amber-50/50 text-amber-900 ring-1 ring-amber-700' : 'border-neutral-200 text-neutral-700'
-                  }`}
-                >
-                  {carat}ct
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Clarity & Colour */}
-        <div className="grid grid-cols-2 gap-4">
-          {allowedClarities.length > 0 && (
-            <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-neutral-700 mb-2">Clarity</label>
-              <div className="grid grid-cols-3 gap-1">
-                {allowedClarities.map((clarity) => (
+          {/* 2. SIZING STEP (Chain Length for Necklaces OR Ring Size for Rings) */}
+          {isNecklace && (
+            <div className="space-y-3 pt-2">
+              <div className="flex justify-between items-center">
+                <h2 className="text-xs font-bold uppercase tracking-wider text-neutral-900">
+                  2. Chain Length
+                </h2>
+                <span className="text-xs text-neutral-500 font-mono font-medium">{chainLength}</span>
+              </div>
+              <div className="grid grid-cols-5 gap-2.5">
+                {CHAIN_LENGTHS.map((c) => (
                   <button
-                    key={clarity}
-                    onClick={() => setSelectedClarity(clarity)}
-                    className={`py-1.5 text-xs font-medium border rounded text-center ${
-                      selectedClarity === clarity ? 'border-amber-700 bg-amber-50/50 text-amber-900' : 'border-neutral-200 text-neutral-700'
+                    key={c.label}
+                    type="button"
+                    onClick={() => setChainLength(c.label)}
+                    className={`py-3 px-2 text-center rounded-lg border transition-all ${
+                      chainLength === c.label
+                        ? 'border-amber-700 bg-amber-50/40 text-amber-900 ring-1 ring-amber-700 font-semibold'
+                        : 'border-neutral-200 hover:border-neutral-300 text-neutral-700 bg-white'
                     }`}
                   >
-                    {clarity}
+                    <div className="text-sm font-semibold">{c.label}</div>
+                    <div className="text-[10px] text-neutral-400 mt-0.5">{c.sub}</div>
                   </button>
                 ))}
               </div>
             </div>
           )}
 
-          {allowedColours.length > 0 && (
-            <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-neutral-700 mb-2">Colour</label>
-              <div className="grid grid-cols-3 gap-1">
-                {allowedColours.map((colour) => (
+          {isRing && (
+            <div className="space-y-3 pt-2">
+              <div className="flex justify-between items-center">
+                <h2 className="text-xs font-bold uppercase tracking-wider text-neutral-900">
+                  2. Ring Size (US)
+                </h2>
+                <span className="text-xs text-neutral-500 font-mono font-medium">Size {ringSize}</span>
+              </div>
+              <div className="grid grid-cols-5 sm:grid-cols-9 gap-2">
+                {RING_SIZES.map((sz) => (
                   <button
-                    key={colour}
-                    onClick={() => setSelectedColour(colour)}
-                    className={`py-1.5 text-xs font-medium border rounded text-center ${
-                      selectedColour === colour ? 'border-amber-700 bg-amber-50/50 text-amber-900' : 'border-neutral-200 text-neutral-700'
+                    key={sz}
+                    type="button"
+                    onClick={() => setRingSize(sz)}
+                    className={`py-2.5 text-center text-xs rounded-lg border transition-all ${
+                      ringSize === sz
+                        ? 'border-amber-700 bg-amber-50/40 text-amber-900 ring-1 ring-amber-700 font-semibold'
+                        : 'border-neutral-200 hover:border-neutral-300 text-neutral-700 bg-white'
                     }`}
                   >
-                    {colour}
+                    {sz}
                   </button>
                 ))}
               </div>
             </div>
           )}
+
+          {/* 3. DIAMOND ORIGIN */}
+          <div className="space-y-3 pt-2">
+            <h2 className="text-xs font-bold uppercase tracking-wider text-neutral-900">
+              3. Diamond Origin
+            </h2>
+            <div className="grid grid-cols-2 gap-3">
+              {ORIGINS.map((o) => (
+                <button
+                  key={o}
+                  type="button"
+                  onClick={() => setOrigin(o)}
+                  className={`py-3 px-4 text-center rounded-lg text-xs font-medium border transition-all ${
+                    origin === o
+                      ? 'border-amber-700 bg-amber-50/30 text-amber-900 ring-1 ring-amber-700 font-semibold'
+                      : 'border-neutral-200 hover:border-neutral-300 text-neutral-700 bg-white'
+                  }`}
+                >
+                  {o}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* 4. DIAMOND SHAPE */}
+          <div className="space-y-3 pt-2">
+            <h2 className="text-xs font-bold uppercase tracking-wider text-neutral-900">
+              4. Diamond Shape
+            </h2>
+            <div className="flex flex-wrap gap-2.5">
+              {SHAPES.map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setShape(s)}
+                  className={`px-6 py-2.5 text-xs rounded-lg border transition-all ${
+                    shape === s
+                      ? 'border-amber-700 bg-amber-50/40 text-amber-900 ring-1 ring-amber-700 font-semibold'
+                      : 'border-neutral-200 hover:border-neutral-300 text-neutral-700 bg-white'
+                  }`}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* 5. CARAT WEIGHT */}
+          <div className="space-y-3 pt-2">
+            <h2 className="text-xs font-bold uppercase tracking-wider text-neutral-900">
+              5. Carat Weight
+            </h2>
+            <div className="grid grid-cols-4 sm:grid-cols-8 gap-2">
+              {CARATS.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => setCarat(c)}
+                  className={`py-2.5 text-center text-xs rounded-lg border transition-all ${
+                    carat === c
+                      ? 'border-amber-700 bg-amber-50/40 text-amber-900 ring-1 ring-amber-700 font-semibold'
+                      : 'border-neutral-200 hover:border-neutral-300 text-neutral-700 bg-white'
+                  }`}
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* 6. CLARITY & COLOUR SPLIT */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 pt-2">
+            <div className="space-y-3">
+              <h2 className="text-xs font-bold uppercase tracking-wider text-neutral-900">6. Clarity</h2>
+              <div className="grid grid-cols-3 gap-2">
+                {CLARITIES.map((cl) => (
+                  <button
+                    key={cl}
+                    type="button"
+                    onClick={() => setClarity(cl)}
+                    className={`py-2 text-center text-xs rounded-lg border transition-all ${
+                      clarity === cl
+                        ? 'border-amber-700 bg-amber-50/40 text-amber-900 ring-1 ring-amber-700 font-semibold'
+                        : 'border-neutral-200 hover:border-neutral-300 text-neutral-700 bg-white'
+                    }`}
+                  >
+                    {cl}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <h2 className="text-xs font-bold uppercase tracking-wider text-neutral-900">Colour</h2>
+              <div className="grid grid-cols-4 gap-2">
+                {COLOURS.map((co) => (
+                  <button
+                    key={co}
+                    type="button"
+                    onClick={() => setColour(co)}
+                    className={`py-2 text-center text-xs rounded-lg border transition-all ${
+                      colour === co
+                        ? 'border-amber-700 bg-amber-50/40 text-amber-900 ring-1 ring-amber-700 font-semibold'
+                        : 'border-neutral-200 hover:border-neutral-300 text-neutral-700 bg-white'
+                    }`}
+                  >
+                    {co}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* CUT & CERTIFICATE SUMMARY */}
+          <div className="grid grid-cols-2 gap-4 pt-2">
+            <div className="border border-neutral-200 p-3.5 rounded-lg bg-white">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-400 block mb-0.5">
+                Cut Grade
+              </span>
+              <span className="text-xs font-semibold text-neutral-800">{cut}</span>
+            </div>
+            <div className="border border-neutral-200 p-3.5 rounded-lg bg-white">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-400 block mb-0.5">
+                Certificate
+              </span>
+              <span className="text-xs font-semibold text-neutral-800">{cert} Verified</span>
+            </div>
+          </div>
+
+          {/* ADD TO CART ACTION */}
+          <div className="pt-4">
+            <button
+              type="button"
+              onClick={handleAddToCart}
+              disabled={isAdding}
+              className="w-full bg-neutral-950 hover:bg-neutral-800 disabled:bg-neutral-400 text-white py-4 rounded-xl text-xs font-bold uppercase tracking-widest transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2"
+            >
+              {isAdding ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" /> Provisioning Custom Item...
+                </>
+              ) : (
+                <>
+                  <Check className="w-4 h-4" /> Add Configuration to Cart (${parseFloat(configuredPrice).toFixed(2)})
+                </>
+              )}
+            </button>
+          </div>
+
         </div>
-
-        {/* Cut & Certificate */}
-        <div className="grid grid-cols-2 gap-4">
-          {allowedCuts.length > 0 && (
-            <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-neutral-700 mb-2">Cut Grade</label>
-              <div className="flex flex-col gap-1">
-                {allowedCuts.map((cut) => (
-                  <button
-                    key={cut}
-                    onClick={() => setSelectedCut(cut)}
-                    className={`py-1.5 px-2 text-xs font-medium border rounded text-left ${
-                      selectedCut === cut ? 'border-amber-700 bg-amber-50/50 text-amber-900' : 'border-neutral-200 text-neutral-700'
-                    }`}
-                  >
-                    {cut}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {allowedCerts.length > 0 && (
-            <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-neutral-700 mb-2">Certificate</label>
-              <div className="flex flex-col gap-1">
-                {allowedCerts.map((cert) => (
-                  <button
-                    key={cert}
-                    onClick={() => setSelectedCert(cert)}
-                    className={`py-1.5 px-2 text-xs font-medium border rounded text-left ${
-                      selectedCert === cert ? 'border-amber-700 bg-amber-50/50 text-amber-900' : 'border-neutral-200 text-neutral-700'
-                    }`}
-                  >
-                    {cert}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-
-        <button
-          onClick={handleAddToCart}
-          className="w-full bg-neutral-900 text-white py-4 rounded font-medium tracking-wide uppercase text-xs hover:bg-neutral-800 transition-colors shadow-sm"
-        >
-          Add Configuration to Cart
-        </button>
       </div>
     </div>
   );
